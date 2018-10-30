@@ -42,11 +42,6 @@ class OrderedDict(dict):
     # The remaining methods are order-aware.
     # Big-O running times for all methods are the same as regular dictionaries.
 
-    # The internal self.__map dict maps keys to links in a doubly linked list.
-    # The circular doubly linked list starts and ends with a sentinel element.
-    # The sentinel element never gets deleted (this simplifies the algorithm).
-    # Each link is stored as a list of length three:  [PREV, NEXT, KEY].
-
     def __init__(*args, **kwds):
         '''Initialize an ordered dictionary.  The signature is the same as
         regular dictionaries, but keyword arguments are not recommended because
@@ -63,53 +58,40 @@ class OrderedDict(dict):
         try:
             self.__root
         except AttributeError:
-            self.__root = root = []                     # sentinel node
-            root[:] = [root, root, None]
-            self.__map = {}
+            self.__root = []
+            self.__todelete = set()
         self.__update(*args, **kwds)
 
     def __setitem__(self, key, value, dict_setitem=dict.__setitem__):
         'od.__setitem__(i, y) <==> od[i]=y'
-        # Setting a new item creates a new link at the end of the linked list,
-        # and the inherited dictionary is updated with the new key/value pair.
         if key not in self:
-            root = self.__root
-            last = root[0]
-            last[1] = root[0] = self.__map[key] = [last, root, key]
+            self.__root.append(key)
+            self.__todelete.discard(key)
         return dict_setitem(self, key, value)
 
     def __delitem__(self, key, dict_delitem=dict.__delitem__):
         'od.__delitem__(y) <==> del od[y]'
-        # Deleting an existing item uses self.__map to find the link which gets
-        # removed by updating the links in the predecessor and successor nodes.
         dict_delitem(self, key)
-        link_prev, link_next, _ = self.__map.pop(key)
-        link_prev[1] = link_next                        # update link_prev[NEXT]
-        link_next[0] = link_prev                        # update link_next[PREV]
+        self.__todelete.add(key)
 
     def __iter__(self):
         'od.__iter__() <==> iter(od)'
-        # Traverse the linked list in order.
-        root = self.__root
-        curr = root[1]                                  # start at the first node
-        while curr is not root:
-            yield curr[2]                               # yield the curr[KEY]
-            curr = curr[1]                              # move to next node
+        if self.__todelete:
+            self.__root = [x for x in self.__root if x not in self.__todelete]
+            self.__todelete.clear()
+        return iter(self.__root)
 
     def __reversed__(self):
         'od.__reversed__() <==> reversed(od)'
-        # Traverse the linked list in reverse order.
-        root = self.__root
-        curr = root[0]                                  # start at the last node
-        while curr is not root:
-            yield curr[2]                               # yield the curr[KEY]
-            curr = curr[0]                              # move to previous node
+        if self.__todelete:
+            self.__root = [x for x in self.__root if x not in self.__todelete]
+            self.__todelete.clear()
+        return reversed(self.__root)
 
     def clear(self):
         'od.clear() -> None.  Remove all items from od.'
-        root = self.__root
-        root[:] = [root, root, None]
-        self.__map.clear()
+        self.__root = []
+        self.__todelete.clear()
         dict.clear(self)
 
     # -- the following methods do not depend on the internal structure --
@@ -172,9 +154,20 @@ class OrderedDict(dict):
         Pairs are returned in LIFO order if last is true or FIFO order if false.
 
         '''
-        if not self:
+        keys = reversed(self.__root) if last else iter(self.__root)
+        count = 0
+        for key in keys:
+            if key not in self.__todelete:
+                break
+            count += 1
+            self.__todelete.discard(key)
+        if count:
+            if last:
+                del self.__root[-count:]
+            else:
+                del self.__root[:count]
+        if not self.__root:
             raise KeyError('dictionary is empty')
-        key = next(reversed(self) if last else iter(self))
         value = self.pop(key)
         return key, value
 
