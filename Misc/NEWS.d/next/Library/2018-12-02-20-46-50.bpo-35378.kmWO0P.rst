@@ -1,0 +1,2 @@
+Fix a bug where some multiprocessing Pool functions would not work properly
+because of reference counting issues

@@ -331,7 +331,7 @@ class Pool(object):
         if self._state != RUN:
             raise ValueError("Pool not running")
         if chunksize == 1:
-            result = IMapIterator(self._cache)
+            result = IMapIterator(self._cache, self)
             self._taskqueue.put(
                 (
                     self._guarded_task_generation(result._job, func, iterable),
@@ -344,7 +344,7 @@ class Pool(object):
                     "Chunksize must be 1+, not {0:n}".format(
                         chunksize))
             task_batches = Pool._get_tasks(func, iterable, chunksize)
-            result = IMapIterator(self._cache)
+            result = IMapIterator(self._cache, self)
             self._taskqueue.put(
                 (
                     self._guarded_task_generation(result._job,
@@ -361,7 +361,7 @@ class Pool(object):
         if self._state != RUN:
             raise ValueError("Pool not running")
         if chunksize == 1:
-            result = IMapUnorderedIterator(self._cache)
+            result = IMapUnorderedIterator(self._cache, self)
             self._taskqueue.put(
                 (
                     self._guarded_task_generation(result._job, func, iterable),
@@ -373,7 +373,7 @@ class Pool(object):
                 raise ValueError(
                     "Chunksize must be 1+, not {0!r}".format(chunksize))
             task_batches = Pool._get_tasks(func, iterable, chunksize)
-            result = IMapUnorderedIterator(self._cache)
+            result = IMapUnorderedIterator(self._cache, self)
             self._taskqueue.put(
                 (
                     self._guarded_task_generation(result._job,
@@ -390,7 +390,7 @@ class Pool(object):
         '''
         if self._state != RUN:
             raise ValueError("Pool not running")
-        result = ApplyResult(self._cache, callback, error_callback)
+        result = ApplyResult(self._cache, callback, error_callback, self)
         self._taskqueue.put(([(result._job, 0, func, args, kwds)], None))
         return result
 
@@ -421,7 +421,7 @@ class Pool(object):
 
         task_batches = Pool._get_tasks(func, iterable, chunksize)
         result = MapResult(self._cache, chunksize, len(iterable), callback,
-                           error_callback=error_callback)
+                           error_callback, self)
         self._taskqueue.put(
             (
                 self._guarded_task_generation(result._job,
@@ -662,12 +662,13 @@ class Pool(object):
 
 class ApplyResult(object):
 
-    def __init__(self, cache, callback, error_callback):
+    def __init__(self, cache, callback, error_callback, pool_reference):
         self._event = threading.Event()
         self._job = next(job_counter)
         self._cache = cache
         self._callback = callback
         self._error_callback = error_callback
+        self._pool_reference = pool_reference
         cache[self._job] = self
 
     def ready(self):
@@ -698,6 +699,7 @@ class ApplyResult(object):
             self._error_callback(self._value)
         self._event.set()
         del self._cache[self._job]
+        self._pool_reference = None
 
 AsyncResult = ApplyResult       # create alias -- see #17805
 
@@ -707,9 +709,10 @@ AsyncResult = ApplyResult       # create alias -- see #17805
 
 class MapResult(ApplyResult):
 
-    def __init__(self, cache, chunksize, length, callback, error_callback):
+    def __init__(self, cache, chunksize, length, callback, error_callback,
+                 pool_reference):
         ApplyResult.__init__(self, cache, callback,
-                             error_callback=error_callback)
+                             error_callback, None)
         self._success = True
         self._value = [None] * length
         self._chunksize = chunksize
@@ -719,6 +722,7 @@ class MapResult(ApplyResult):
             del cache[self._job]
         else:
             self._number_left = length//chunksize + bool(length % chunksize)
+        self._pool_reference = pool_reference
 
     def _set(self, i, success_result):
         self._number_left -= 1
@@ -729,6 +733,7 @@ class MapResult(ApplyResult):
                 if self._callback:
                     self._callback(self._value)
                 del self._cache[self._job]
+                self._pool_reference = None
                 self._event.set()
         else:
             if not success and self._success:
@@ -740,6 +745,7 @@ class MapResult(ApplyResult):
                 if self._error_callback:
                     self._error_callback(self._value)
                 del self._cache[self._job]
+                self._pool_reference = None
                 self._event.set()
 
 #
@@ -748,7 +754,7 @@ class MapResult(ApplyResult):
 
 class IMapIterator(object):
 
-    def __init__(self, cache):
+    def __init__(self, cache, pool_reference):
         self._cond = threading.Condition(threading.Lock())
         self._job = next(job_counter)
         self._cache = cache
@@ -757,6 +763,7 @@ class IMapIterator(object):
         self._length = None
         self._unsorted = {}
         cache[self._job] = self
+        self._pool_reference = pool_reference
 
     def __iter__(self):
         return self
@@ -798,6 +805,7 @@ class IMapIterator(object):
 
             if self._index == self._length:
                 del self._cache[self._job]
+                self._pool_reference = None
 
     def _set_length(self, length):
         with self._cond:
@@ -805,6 +813,7 @@ class IMapIterator(object):
             if self._index == self._length:
                 self._cond.notify()
                 del self._cache[self._job]
+                self._pool_reference = None
 
 #
 # Class whose instances are returned by `Pool.imap_unordered()`
@@ -819,6 +828,7 @@ class IMapUnorderedIterator(IMapIterator):
             self._cond.notify()
             if self._index == self._length:
                 del self._cache[self._job]
+                self._pool_reference = None
 
 #
 #

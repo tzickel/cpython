@@ -2566,6 +2566,34 @@ class _TestPool(BaseTestCase):
         gc.collect()
         self.assertIsNone(wr())
 
+    # TODO do I need support.reap_threads here as well ?
+    def test_dangling_pool_processing(self):
+        res = self.Pool().map_async(str, range(10))
+        self.assertEqual(len(set(res.get())) == 10)
+        res = self.Pool().map_async(str, range(10), chunksize=5)
+        self.assertEqual(len(set(res.get())) == 10)
+
+        res = []
+        for i in self.Pool().imap(str, range(10)):
+            res.append(i)
+        self.assertEqual(len(set(res)) == 10)
+        res = []
+        for i in self.Pool().imap(str, range(10), chunksize=5):
+            res.append(i)
+        self.assertEqual(len(set(res)) == 10)
+
+        res = []
+        for i in self.Pool().imap_unordered(str, range(10)):
+            res.append(i)
+        self.assertEqual(len(set(res)) == 10)
+        res = []
+        for i in self.Pool().imap_unordered(str, range(10), chunksize=5):
+            res.append(i)
+        self.assertEqual(len(set(res)) == 10)
+
+        res = self.Pool().apply_async(str, (1, ))
+        self.assertEqual(res.get() == '1')
+
 def raising():
     raise KeyError("key")
 
